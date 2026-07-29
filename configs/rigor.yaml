@@ -1,0 +1,11 @@
+# Benchmark rigor parameters (AGENTKV_SPEC.md §0.2). No magic numbers in code —
+# every threshold used by metrics/rigor.py is read from here.
+
+warmup_trajectories: 3       # discard the first N trajectories per run (§0.2)
+min_seeds: 5                 # refuse to report median/IQR below this (§0.2, §7)
+clock_drift_fail_pct: 5.0    # fail loudly if SM clock drifts more than this vs. baseline
+
+# Target SM clock for `nvidia-smi -lgc <mhz>,<mhz>`. Leave null to skip hardware
+# locking and rely on drift detection instead — expected default under WSL2, where
+# `nvidia-smi -lgc` is typically unavailable (spec §9). Set once measured on this GPU.
+lock_gpu_clock_mhz: null

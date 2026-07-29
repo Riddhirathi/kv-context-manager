@@ -1,0 +1,26 @@
+# Model + engine config for AgentKV Phase 0.
+# Values here are the starting point specified in AGENTKV_SPEC.md §0.1.
+# `gpu_memory_utilization` and the resulting KV cache capacity (tokens) are
+# empirically tuned on first run against the 4060 (8GB) and must be recorded
+# back into this file + README.md once measured — do not leave them as guesses.
+
+model:
+  primary: "Qwen/Qwen3-1.7B"
+  fallback: "Qwen/Qwen3-0.6B"   # use if primary OOMs at a usable context length
+  dtype: "bfloat16"             # Ada (SM 8.9) supports bf16 natively
+
+engine:
+  # vLLM V1 engine only.
+  enable_prefix_caching: true
+  block_size: 16                # vLLM default; cache reuse is granular to this
+  gpu_memory_utilization: 0.85  # starting point; back off on OOM, log final value
+  max_model_len: 8192           # ceiling for the KV cache; tune against §0.1 measurement
+  seed: 0                       # overridden per-run by rigor.py's seed sweep (>=5 seeds)
+  swap_space_gb: 4              # CPU offload space for Phase 4 KV connector work
+
+# Filled in after first successful boot on the target GPU (spec §0.1: "this number
+# goes in the README"). Left null until measured — do not fabricate.
+measured:
+  kv_cache_capacity_tokens: null
+  gpu_memory_utilization_final: null
+  measured_on: null             # ISO date + GPU/driver string

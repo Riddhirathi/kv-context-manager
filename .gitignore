@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Secrets
+.env
+*.key
+
+# Model / HF caches (never commit these; too large, and re-downloadable)
+.cache/
+models/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Large or scratch outputs that are NOT the small committed results
+results/**/*.pt
+results/**/*.safetensors
+/scratch/
