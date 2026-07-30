@@ -10,13 +10,25 @@ See `AGENTKV_SPEC.md` for the full project spec and phased plan.
 
 ## Environment
 
-- Hardware target: single NVIDIA RTX 4060 Laptop (8 GB VRAM, Ada / SM 8.9).
-- OS: Linux via WSL2 Ubuntu (Windows host). vLLM does not run natively on Windows.
-- Model: `Qwen/Qwen3-1.7B` primary, `Qwen/Qwen3-0.6B` fallback if VRAM-tight.
-- `gpu_memory_utilization`: TBD empirically (see `configs/model.yaml`) — will be
-  recorded here along with the resulting KV cache capacity in tokens once measured.
-- Pinned versions: see `pyproject.toml` (vLLM, torch, transformers). Exact versions
-  will be locked via `pip freeze` after first successful `make setup` and reported here.
+- Hardware: NVIDIA RTX 4060 Laptop, 8GB VRAM, driver 572.70, CUDA 12.8.
+- OS: WSL2 Ubuntu 24.04 (Windows 11 host). vLLM does not run natively on Windows;
+  GPU passthrough into WSL2 confirmed working.
+- Engine: vLLM 0.8.5, V1 engine, served via `vllm.entrypoints.openai.api_server`
+  (not the offline `LLM.generate()` batch API — verified that it doesn't populate
+  per-request `metrics`/`num_cached_tokens` in this version; see
+  `src/agentkv/serving/engine.py`'s module docstring for the full rationale).
+- `gpu_memory_utilization = 0.85` needed no backoff for either model — confirmed
+  no OOM at `max_model_len = 8192` for both:
+
+  | Model | KV cache capacity (tokens) | Max concurrency @ 8192 ctx |
+  |---|---|---|
+  | `Qwen/Qwen3-1.7B` (primary) | ~9,456 | 1.15x — tight, little headroom |
+  | `Qwen/Qwen3-0.6B` (fallback) | ~29,150 | 3.56x |
+
+  (KV capacity varies ~50-100 tokens run-to-run from free-VRAM fragmentation at
+  boot; see `configs/model.yaml`'s `measured` section for the source numbers.)
+- Pinned versions: see `pyproject.toml`. Installed and verified: torch 2.6.0+cu124,
+  vLLM 0.8.5, Python 3.12.3.
 
 ## Setup (inside WSL2 Ubuntu)
 

@@ -1,24 +1,47 @@
-"""Thin wrapper around vLLM's LLM (V1 engine) exposing per-request cache stats.
+"""Wraps vLLM's OpenAI-compatible server, exposing per-request cache stats.
 
-vLLM does not run on native Windows (spec §9) — the `vllm` import below is
-deferred so this module stays importable for type-checking and for the parts
-of the test suite that don't need a live engine. `ModelConfig` itself has no
-vLLM dependency and is fully testable without a GPU.
+vLLM does not run on native Windows (spec §9) — the `vllm`/subprocess-spawn
+codepaths below only execute when `VLLMEngine` is actually instantiated, so
+this module stays importable for type-checking on any platform. `ModelConfig`
+itself has no vLLM dependency and is fully testable without a GPU.
 
-NOTE for whoever runs this first inside WSL2 (Task: set up WSL2 environment):
-the exact attribute names for per-request cache/timing stats
-(`RequestOutput.num_cached_tokens`, `RequestOutput.metrics.*`) are version-
-dependent in vLLM's V1 engine. Verify them against the pinned version in
-pyproject.toml on first real run and correct `_extract_step_result` if they've
-moved — don't trust this file's field names over the installed library's.
+Why the server, not the offline `vllm.LLM` batch API: verified on the real
+4060 against vLLM 0.8.5 that `LLM.generate()`'s `RequestOutput.metrics` and
+`RequestOutput.num_cached_tokens` are simply `None` in this version — V1's
+offline path doesn't populate per-request timing/cache stats. The OpenAI
+server does, via two independent, verified channels:
+
+1. Streaming `/v1/completions` gives real TTFT (wall-clock to first SSE
+   chunk) and decode time (first chunk to stream end), plus `usage` in the
+   final chunk for prompt/completion token counts.
+2. The Prometheus `/metrics` endpoint exposes a cumulative
+   `vllm:gpu_prefix_cache_hits_total` counter, in *blocks*. Verified
+   empirically: it increases by exactly N when a request reuses N full
+   blocks of a previously-cached prefix, and by 0 on a cold request. Per-
+   request cached_tokens = block-counter delta × block_size.
+
+Neither of these is documented as a stable public contract — both were
+confirmed by directly booting the server and diffing real responses, not
+assumed from vLLM's docs. If a future vLLM version renames the metric or
+drops delta-style counters, `generate_step`/`_prefix_cache_hit_blocks` will
+raise clearly rather than silently return wrong numbers.
 """
 from __future__ import annotations
 
+import json
+import re
+import subprocess
+import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
+import httpx
 import yaml
+
+_KV_CACHE_LOG_RE = re.compile(r"GPU KV cache size:\s*([\d,]+)\s*tokens")
+_PREFIX_CACHE_HITS_METRIC = "vllm:gpu_prefix_cache_hits_total"
 
 
 @dataclass(frozen=True)
@@ -59,50 +82,158 @@ class StepResult:
 
 
 class VLLMEngine:
-    """Wraps vllm.LLM, forcing prefix caching on and surfacing cache-hit stats."""
+    """Boots `vllm serve` as a subprocess and drives it over HTTP.
 
-    def __init__(self, config: ModelConfig) -> None:
-        from vllm import LLM  # deferred: vLLM is Linux/WSL2-only
+    Use as a context manager so the server subprocess is always cleaned up:
 
+        with VLLMEngine(config) as engine:
+            result = engine.generate_step(token_ids, max_tokens=32)
+    """
+
+    def __init__(
+        self, config: ModelConfig, *, port: int = 8901, startup_timeout_s: float = 300.0
+    ) -> None:
         self._config = config
-        self._llm: Any = LLM(
-            model=config.model_name,
-            dtype=config.dtype,
-            enable_prefix_caching=config.enable_prefix_caching,
-            block_size=config.block_size,
-            gpu_memory_utilization=config.gpu_memory_utilization,
-            max_model_len=config.max_model_len,
-            seed=config.seed,
+        self._base_url = f"http://127.0.0.1:{port}"
+        self._client = httpx.Client(timeout=120.0)
+        self._kv_cache_capacity_tokens: int | None = None
+        self._log_lines: list[str] = []
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--model",
+            config.model_name,
+            "--dtype",
+            config.dtype,
+            "--block-size",
+            str(config.block_size),
+            "--gpu-memory-utilization",
+            str(config.gpu_memory_utilization),
+            "--max-model-len",
+            str(config.max_model_len),
+            "--seed",
+            str(config.seed),
+            "--port",
+            str(port),
+        ]
+        if config.enable_prefix_caching:
+            cmd.append("--enable-prefix-caching")
+
+        self._process = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
         )
+        self._log_thread = threading.Thread(target=self._drain_log, daemon=True)
+        self._log_thread.start()
+        self._wait_until_ready(startup_timeout_s)
+
+    def _drain_log(self) -> None:
+        assert self._process.stdout is not None
+        for line in self._process.stdout:
+            self._log_lines.append(line)
+            print(line, end="")  # don't silently swallow vLLM's server log
+            match = _KV_CACHE_LOG_RE.search(line)
+            if match is not None:
+                self._kv_cache_capacity_tokens = int(match.group(1).replace(",", ""))
+
+    def _wait_until_ready(self, timeout_s: float) -> None:
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self._process.poll() is not None:
+                raise RuntimeError(
+                    "vLLM server exited during startup:\n" + "".join(self._log_lines)
+                )
+            try:
+                if self._client.get(f"{self._base_url}/health", timeout=2.0).status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            time.sleep(2.0)
+        else:
+            raise RuntimeError(f"vLLM server did not become healthy within {timeout_s}s.")
+
+        if self._kv_cache_capacity_tokens is None:
+            # Give the log-draining thread a moment to catch up with the health check.
+            time.sleep(1.0)
+        if self._kv_cache_capacity_tokens is None:
+            raise RuntimeError(
+                "vLLM server is healthy but never logged 'GPU KV cache size: N tokens'; "
+                "its log format may have changed — update _KV_CACHE_LOG_RE in this module."
+            )
 
     def kv_cache_capacity_tokens(self) -> int:
-        """Reads the KV cache capacity vLLM actually allocated, in tokens.
+        """The KV cache capacity vLLM actually allocated, in tokens.
 
         Spec §0.1: "Log the resulting KV cache capacity in tokens; this number
-        goes in the README." Verify this accessor against the installed V1
-        engine's stats API — see module docstring.
+        goes in the README."
         """
-        cache_config = self._llm.llm_engine.cache_config
-        return int(cache_config.num_gpu_blocks * self._config.block_size)
+        assert self._kv_cache_capacity_tokens is not None
+        return self._kv_cache_capacity_tokens
+
+    def _prefix_cache_hit_blocks(self) -> float:
+        text = self._client.get(f"{self._base_url}/metrics", timeout=10.0).text
+        for line in text.splitlines():
+            if line.startswith(_PREFIX_CACHE_HITS_METRIC):
+                return float(line.rsplit(" ", 1)[1])
+        raise RuntimeError(f"{_PREFIX_CACHE_HITS_METRIC} not found in /metrics output.")
 
     def generate_step(self, prompt_token_ids: list[int], *, max_tokens: int) -> StepResult:
-        from vllm import SamplingParams
+        hits_before = self._prefix_cache_hit_blocks()
+        t0 = time.monotonic()
+        first_chunk_t: float | None = None
+        usage: dict[str, int] | None = None
 
-        params = SamplingParams(max_tokens=max_tokens, seed=self._config.seed)
-        outputs = self._llm.generate(
-            prompt_token_ids=[prompt_token_ids], sampling_params=params, use_tqdm=False
-        )
-        output = outputs[0]
-        metrics = output.metrics
-        cached_tokens = int(getattr(output, "num_cached_tokens", 0))
-        prompt_tokens = len(prompt_token_ids)
-        ttft_s = metrics.first_token_time - metrics.arrival_time
-        decode_s = metrics.finished_time - metrics.first_token_time
+        with self._client.stream(
+            "POST",
+            f"{self._base_url}/v1/completions",
+            json={
+                "model": self._config.model_name,
+                "prompt": prompt_token_ids,
+                "max_tokens": max_tokens,
+                "seed": self._config.seed,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+        ) as response:
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                payload = line[len("data: ") :]
+                if payload.strip() == "[DONE]":
+                    break
+                if first_chunk_t is None:
+                    first_chunk_t = time.monotonic()
+                chunk_usage = json.loads(payload).get("usage")
+                if chunk_usage:
+                    usage = chunk_usage
+        t_end = time.monotonic()
+
+        if usage is None or first_chunk_t is None:
+            raise RuntimeError("vLLM completions stream returned no usage/content chunks.")
+
+        hits_after = self._prefix_cache_hit_blocks()
+        cached_tokens = int((hits_after - hits_before) * self._config.block_size)
+
         return StepResult(
-            prompt_tokens=prompt_tokens,
+            prompt_tokens=usage["prompt_tokens"],
             cached_tokens=cached_tokens,
-            prefill_tokens=prompt_tokens - cached_tokens,
-            output_tokens=len(output.outputs[0].token_ids),
-            ttft_ms=ttft_s * 1000,
-            decode_ms=decode_s * 1000,
+            prefill_tokens=usage["prompt_tokens"] - cached_tokens,
+            output_tokens=usage["completion_tokens"],
+            ttft_ms=(first_chunk_t - t0) * 1000,
+            decode_ms=(t_end - first_chunk_t) * 1000,
         )
+
+    def shutdown(self) -> None:
+        self._process.terminate()
+        try:
+            self._process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+        self._client.close()
+
+    def __enter__(self) -> VLLMEngine:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.shutdown()

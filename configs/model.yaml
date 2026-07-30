@@ -18,9 +18,18 @@ engine:
   seed: 0                       # overridden per-run by rigor.py's seed sweep (>=5 seeds)
   swap_space_gb: 4              # CPU offload space for Phase 4 KV connector work
 
-# Filled in after first successful boot on the target GPU (spec §0.1: "this number
-# goes in the README"). Left null until measured — do not fabricate.
+# Measured on the target GPU (spec §0.1: "this number goes in the README").
+# gpu_memory_utilization=0.85 needed no backoff for either model — no OOM at
+# max_model_len=8192 for either. KV cache capacity varies by ~50-100 tokens
+# run-to-run (free-VRAM fragmentation at boot time); these are representative
+# single-run measurements, not exact constants.
 measured:
-  kv_cache_capacity_tokens: null
-  gpu_memory_utilization_final: null
-  measured_on: null             # ISO date + GPU/driver string
+  primary:
+    model: "Qwen/Qwen3-1.7B"
+    kv_cache_capacity_tokens: 9456   # max concurrency 1.15x at max_model_len=8192 — tight
+    gpu_memory_utilization_final: 0.85
+  fallback:
+    model: "Qwen/Qwen3-0.6B"
+    kv_cache_capacity_tokens: 29152  # max concurrency 3.56x at max_model_len=8192
+    gpu_memory_utilization_final: 0.85
+  measured_on: "2026-07-30, RTX 4060 Laptop 8GB, driver 572.70, CUDA 12.8, WSL2 Ubuntu 24.04, vLLM 0.8.5"
