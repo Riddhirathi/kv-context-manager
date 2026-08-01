@@ -123,7 +123,12 @@ class SyntheticIncidentEnv:
             return ToolCallResult(output=f"No such file: {path}", is_error=True)
         if path not in self._files:
             if path.startswith("logs/"):
-                self._files[path] = self._gen_log_dump(path, n_lines=self._rng.randint(80, 400))
+                # Capped at 60 lines (~2-3k tokens worst case, measured empirically
+                # against the real recorder model+tokenizer) — the original
+                # randint(80, 400) produced single tool outputs up to 15,274 real
+                # tokens, exceeding this hardware's entire KV cache pool (~12,608
+                # tokens) on their own, regardless of --max-model-len.
+                self._files[path] = self._gen_log_dump(path, n_lines=self._rng.randint(20, 60))
             else:
                 self._files[path] = self._gen_source_file(path)
         return ToolCallResult(output=self._files[path])

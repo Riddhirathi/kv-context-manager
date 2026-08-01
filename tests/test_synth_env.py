@@ -33,13 +33,15 @@ def test_read_unknown_file_is_an_error():
     assert result.is_error
 
 
-def test_log_files_contain_mixed_small_and_large_outputs():
+def test_files_contain_mixed_small_and_large_outputs():
+    # Not "logs > source" specifically (both are randomized within overlapping
+    # ranges, kept small enough post-fix that a single tool output never
+    # exceeds the recorder model's KV cache pool) — just that outputs vary
+    # meaningfully in size, per spec §0.4's "mixed tool-output sizes".
     env = SyntheticIncidentEnv(seed=5)
     files = env.call("list_files", {}).output.splitlines()
-    lens = {p: len(env.call("read_file", {"path": p}).output) for p in files}
-    source_lens = [n for p, n in lens.items() if not p.startswith("logs/")]
-    log_lens = [n for p, n in lens.items() if p.startswith("logs/")]
-    assert max(log_lens) > max(source_lens)
+    lens = [len(env.call("read_file", {"path": p}).output) for p in files]
+    assert max(lens) - min(lens) > 500
 
 
 def test_search_logs_finds_injected_error():
