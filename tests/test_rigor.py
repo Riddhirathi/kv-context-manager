@@ -96,3 +96,14 @@ def test_gpu_clock_lock_raises_on_excessive_drift():
     baseline = lock._baseline_mhz
     with pytest.raises(ClockDriftExceeded):
         lock.check_drift(int(baseline * 2))
+
+
+def test_gpu_clock_lock_baseline_uses_median_of_samples():
+    """A lone snapshot can catch a transient boost spike rather than the
+    workload's steady clock — passing warmup samples should use their median
+    instead of a fresh single read."""
+    config = make_config(lock_gpu_clock_mhz=None)
+    lock = GpuClockLock(config)
+    lock.acquire([2340, 2360, 2535, 2350, 2345])  # one outlier spike among steady reads
+    assert lock._baseline_mhz == 2350  # median, not the 2535 outlier
+    lock.check_drift(2360)  # within 5% of the median -> no raise

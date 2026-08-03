@@ -23,7 +23,6 @@ Usage (inside the WSL venv):
 from __future__ import annotations
 
 import argparse
-import json
 import statistics
 import sys
 from pathlib import Path
@@ -33,23 +32,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from agentkv.bench.replay import Turn, load_trajectory  # noqa: E402
+from agentkv.context.layout import render_turns_to_token_ids  # noqa: E402
 from agentkv.serving.engine import ModelConfig, VLLMEngine  # noqa: E402
 
 DRIFT_TOLERANCE_PCT = 5.0
-
-
-def render_prompt_token_ids(turns: list[Turn], tokenizer: Any) -> list[int]:
-    parts: list[str] = []
-    for t in turns:
-        parts.append(f"<{t.role}>")
-        if t.content:
-            parts.append(t.content)
-        if t.tool_calls:
-            parts.append(json.dumps(t.tool_calls))
-        if t.tool_results:
-            parts.append(json.dumps(t.tool_results))
-    text = "\n".join(parts)
-    return tokenizer.encode(text)  # type: ignore[no-any-return]
 
 
 def replay_once(
@@ -58,7 +44,7 @@ def replay_once(
     cached_tokens_seq: list[int] = []
     ttft_seq: list[float] = []
     for context in turns_seq:
-        prompt_token_ids = render_prompt_token_ids(context, tokenizer)
+        prompt_token_ids = render_turns_to_token_ids(context, tokenizer)
         result = engine.generate_step(prompt_token_ids, max_tokens=8)
         cached_tokens_seq.append(result.cached_tokens)
         ttft_seq.append(result.ttft_ms)

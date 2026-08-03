@@ -178,8 +178,33 @@ class VLLMEngine:
                 return float(line.rsplit(" ", 1)[1])
         raise RuntimeError(f"{_PREFIX_CACHE_HITS_METRIC} not found in /metrics output.")
 
+    def _stable_prefix_cache_hit_blocks(
+        self, *, settle_timeout_s: float = 2.0, poll_interval_s: float = 0.05
+    ) -> float:
+        """Polls `/metrics` until the counter stops changing between reads.
+
+        Verified empirically: after a large chunked-prefill request (a
+        compaction event's re-prefill, which vLLM splits across multiple
+        scheduler steps per `--max-num-batched-tokens`), the counter can still
+        be ticking up for a moment after the HTTP response has already
+        finished streaming. Reading it exactly once right at response
+        completion silently hands part of that still-arriving increment to
+        whichever request's "before" snapshot happens to poll next,
+        inflating that *next* request's apparent cache-hit delta beyond what
+        it actually reused.
+        """
+        value = self._prefix_cache_hit_blocks()
+        deadline = time.monotonic() + settle_timeout_s
+        while time.monotonic() < deadline:
+            time.sleep(poll_interval_s)
+            next_value = self._prefix_cache_hit_blocks()
+            if next_value == value:
+                return value
+            value = next_value
+        return value
+
     def generate_step(self, prompt_token_ids: list[int], *, max_tokens: int) -> StepResult:
-        hits_before = self._prefix_cache_hit_blocks()
+        hits_before = self._stable_prefix_cache_hit_blocks()
         t0 = time.monotonic()
         first_chunk_t: float | None = None
         usage: dict[str, int] | None = None
@@ -212,7 +237,7 @@ class VLLMEngine:
         if usage is None or first_chunk_t is None:
             raise RuntimeError("vLLM completions stream returned no usage/content chunks.")
 
-        hits_after = self._prefix_cache_hit_blocks()
+        hits_after = self._stable_prefix_cache_hit_blocks()
         cached_tokens = int((hits_after - hits_before) * self._config.block_size)
 
         return StepResult(
@@ -223,6 +248,29 @@ class VLLMEngine:
             ttft_ms=(first_chunk_t - t0) * 1000,
             decode_ms=(t_end - first_chunk_t) * 1000,
         )
+
+    def complete_text(
+        self, prompt_token_ids: list[int], *, max_tokens: int, temperature: float = 0.0
+    ) -> str:
+        """Plain-text completion, not routed through the cache-hit-delta bookkeeping
+        in `generate_step` — used for summarization calls (policies/naive.py) that
+        are real generation work but not one of the trajectory steps being measured.
+        `temperature=0.0` keeps summaries deterministic given the same input text,
+        which compaction-event reproducibility depends on.
+        """
+        response = self._client.post(
+            f"{self._base_url}/v1/completions",
+            json={
+                "model": self._config.model_name,
+                "prompt": prompt_token_ids,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "seed": self._config.seed,
+            },
+        )
+        response.raise_for_status()
+        text: str = response.json()["choices"][0]["text"]
+        return text
 
     def shutdown(self) -> None:
         self._process.terminate()

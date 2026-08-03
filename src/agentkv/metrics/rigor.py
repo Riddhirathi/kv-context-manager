@@ -51,10 +51,21 @@ class GpuClockLock:
         self._locked = False
         self._baseline_mhz: int | None = None
 
-    def acquire(self) -> None:
+    def acquire(self, baseline_samples: Sequence[int] | None = None) -> None:
+        """`baseline_samples`: optional SM clock readings taken during a
+        warmup period, used as the baseline instead of one fresh read.
+
+        A single instantaneous read can land on a transient boost spike
+        rather than the workload's actual steady-state clock — measured on
+        the 4060 laptop: a lone post-warmup read caught ~2535MHz while the
+        subsequent steady operating band was ~2340-2360MHz, producing a false
+        ~7-8% "drift" that was really baseline noise, not throttling. Passing
+        several samples collected across warmup and taking their median
+        avoids that.
+        """
         nvidia_smi = shutil.which("nvidia-smi")
         if self._config.lock_gpu_clock_mhz is None or nvidia_smi is None:
-            self._baseline_mhz = self._read_sm_clock_mhz()
+            self._baseline_mhz = self._resolve_baseline(baseline_samples)
             return
         target = self._config.lock_gpu_clock_mhz
         result = subprocess.run(
@@ -64,7 +75,12 @@ class GpuClockLock:
         )
         self._locked = result.returncode == 0
         if not self._locked:
-            self._baseline_mhz = self._read_sm_clock_mhz()
+            self._baseline_mhz = self._resolve_baseline(baseline_samples)
+
+    def _resolve_baseline(self, baseline_samples: Sequence[int] | None) -> int:
+        if baseline_samples:
+            return int(statistics.median(baseline_samples))
+        return self._read_sm_clock_mhz()
 
     def release(self) -> None:
         if self._locked:

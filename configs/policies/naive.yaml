@@ -1,0 +1,6 @@
+# Naive compaction baseline (AGENTKV_SPEC.md §1.1).
+# threshold_pct_of_window: compact once the rendered prompt exceeds this
+# fraction of max_model_len (configs/model.yaml) — spec's "e.g. 60% of window".
+threshold_pct_of_window: 0.6
+retire_fraction: 0.5      # replace the oldest 50% of (non-anchor) turns
+max_summary_tokens: 300   # cap on the LLM-generated summary length
