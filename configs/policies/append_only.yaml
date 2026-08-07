@@ -1,0 +1,14 @@
+# Append-only compaction (AGENTKV_SPEC.md §2.2).
+# Same threshold/retire semantics as naive.yaml, so a naive-vs-append_only
+# comparison isolates the layout change itself, not a difference in when/how
+# much each policy retires.
+threshold_pct_of_window: 0.6
+retire_fraction: 0.5
+max_summary_tokens: 300
+
+# Block alignment (spec §2.3), applied as a separate ablation axis on top of
+# this policy's turns — see context/alignment.py and experiments/phase2_layout.py's
+# --align flag. block_size itself comes from configs/model.yaml; filler_token_id
+# is model/tokenizer-specific and resolved at run time (Qwen3's tokenizer
+# whitespace token), not hardcoded here.
+align_to_block_boundary: false

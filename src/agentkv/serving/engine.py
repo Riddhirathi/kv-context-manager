@@ -64,7 +64,10 @@ class ModelConfig:
             enable_prefix_caching=data["engine"]["enable_prefix_caching"],
             block_size=data["engine"]["block_size"],
             gpu_memory_utilization=data["engine"]["gpu_memory_utilization"],
-            max_model_len=data["engine"]["max_model_len"],
+            # Per-model ceiling, not one shared value — the two models measured
+            # very different KV cache headroom on this 8GB card (see
+            # configs/model.yaml's `measured` section), so each gets its own.
+            max_model_len=data["engine"]["max_model_len"][model_key],
             seed=data["engine"]["seed"],
         )
 
@@ -208,6 +211,7 @@ class VLLMEngine:
         t0 = time.monotonic()
         first_chunk_t: float | None = None
         usage: dict[str, int] | None = None
+        raw_lines: list[str] = []
 
         with self._client.stream(
             "POST",
@@ -221,7 +225,20 @@ class VLLMEngine:
                 "stream_options": {"include_usage": True},
             },
         ) as response:
+            if response.status_code != 200:
+                # A non-200 response (e.g. 400 because prompt_token_ids exceeds
+                # max_model_len) still lands here rather than raising, since
+                # streaming responses don't raise_for_status automatically —
+                # read the body explicitly so the failure is diagnosable
+                # instead of silently falling through to "no usage chunks".
+                body = response.read().decode(errors="replace")
+                raise RuntimeError(
+                    f"vLLM /v1/completions returned HTTP {response.status_code} for a "
+                    f"{len(prompt_token_ids)}-token prompt (max_model_len="
+                    f"{self._config.max_model_len}): {body}"
+                )
             for line in response.iter_lines():
+                raw_lines.append(line)
                 if not line or not line.startswith("data: "):
                     continue
                 payload = line[len("data: ") :]
@@ -235,7 +252,12 @@ class VLLMEngine:
         t_end = time.monotonic()
 
         if usage is None or first_chunk_t is None:
-            raise RuntimeError("vLLM completions stream returned no usage/content chunks.")
+            preview = " | ".join(raw_lines[:5]) if raw_lines else "(empty response body)"
+            raise RuntimeError(
+                f"vLLM completions stream returned no usage/content chunks for a "
+                f"{len(prompt_token_ids)}-token prompt (max_model_len="
+                f"{self._config.max_model_len}). Raw response: {preview}"
+            )
 
         hits_after = self._stable_prefix_cache_hit_blocks()
         cached_tokens = int((hits_after - hits_before) * self._config.block_size)
@@ -270,6 +292,23 @@ class VLLMEngine:
         )
         response.raise_for_status()
         text: str = response.json()["choices"][0]["text"]
+
+        # Force the global prefix-cache-hits counter to settle before handing
+        # control back to the caller. Root cause of a real Phase 2 bug: this
+        # method (unlike generate_step) never touched the counter at all, so a
+        # large summarization prefill's own cache-hit accounting could still
+        # be trickling in (same lagging-counter behavior documented on
+        # `_stable_prefix_cache_hit_blocks`) when the *next* call reads
+        # `hits_before` for an unrelated trajectory step — silently crediting
+        # that step with part of the summarizer's own reuse. Reproduced: naive's
+        # first compaction event on a 69-turn retirement (a large summarization
+        # prefill) measured 592 more "reused" tokens on the next trajectory
+        # step than the block-math theory allowed for (a 33-block mismatch,
+        # far past the documented +/-1 tolerance) - a timing race, not
+        # deterministic, so Phase 1's ~280 firing events not hitting it
+        # doesn't mean it couldn't happen there too; a larger retirement just
+        # widens the window to lose the race.
+        self._stable_prefix_cache_hit_blocks()
         return text
 
     def shutdown(self) -> None:

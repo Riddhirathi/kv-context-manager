@@ -103,10 +103,30 @@ def assert_theory_matches(check: DivergenceCheck, *, tolerance_blocks: int = 1) 
     compaction event; the discrepancy appears only around boundary-completing
     appends and is bounded to exactly one block when it occurs — it doesn't
     compound, since each step's prediction is computed fresh from that step's
-    own actual prompt. A tolerance of 1 still catches any larger mismatch,
-    which would mean the cache model is genuinely wrong.
+    own actual prompt.
+
+    Deliberately one-directional: only raises when measured invalidation
+    EXCEEDS the prediction (i.e. the engine reused *fewer* blocks than the
+    pairwise prev-vs-new comparison says it could have) — the direction the
+    spec principle actually guards against, since it can only mean the model
+    or measurement is broken.
+
+    The opposite direction — measured invalidation *below* prediction (the
+    engine reusing *more* than this pairwise model predicts) — is not
+    flagged. Reproduced and confirmed legitimate (see
+    experiments/_debug_real_summarizer_mismatch.py, Phase 2's traj-000/naive
+    step 139: predicted 584 invalidated blocks, measured only 551): this
+    model only compares a request's prompt against the single
+    immediately-previous request, but vLLM's real prefix cache is a pool
+    across the engine's *entire* request history. The LLM summarizer
+    (temperature=0) often quotes retired-turn content verbatim in its
+    summaries, and that exact text is frequently still resident in the cache
+    from a recent — but not immediately-previous — request. This doesn't
+    corrupt Gate 2: its prefill/token accounting comes from vLLM's own
+    measured values, not this theoretical prediction, and the effect is
+    symmetric across both policies (both share one summarizer).
     """
-    diff = abs(check.predicted_invalidated_blocks - check.measured_invalidated_blocks)
+    diff = check.measured_invalidated_blocks - check.predicted_invalidated_blocks
     if diff > tolerance_blocks:
         raise TheoryMismatchError(
             f"step {check.step_idx}: predicted {check.predicted_invalidated_blocks} "

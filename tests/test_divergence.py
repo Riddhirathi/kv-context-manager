@@ -109,6 +109,33 @@ def test_assert_theory_matches_tolerates_one_block_of_slack():
     assert_theory_matches(check)  # must not raise: within the 1-block tolerance
 
 
+def test_assert_theory_matches_allows_unbounded_extra_reuse():
+    """The opposite direction of the mismatch above — measured invalidation
+    *below* prediction, i.e. the engine reused *more* than the pairwise
+    prev-vs-new comparison predicts — must never raise, however large. This
+    model only compares against the single immediately-previous prompt, but
+    vLLM's real prefix cache is a pool across the engine's whole request
+    history; content can legitimately be reused from further back (e.g. an
+    LLM summarizer quoting retired-turn text verbatim into a summary that's
+    still resident in the cache from a recent, non-adjacent request —
+    reproduced on Phase 2's traj-000/naive step 139). Gate 2's real
+    prefill/token accounting comes from vLLM's own measured values, not this
+    prediction, so extra reuse here is a legitimate bonus, not a bug."""
+    prev = list(range(80))  # 5 blocks
+    new = list(range(40)) + [999] * 40  # divergence at token 40 -> predicted 3 invalidated
+    check = compute_divergence_check(
+        step_idx=139,
+        prev_prompt_ids=prev,
+        new_prompt_ids=new,
+        measured_cached_tokens=80,  # all 5 blocks reused despite divergence -> 0 invalidated
+        block_size=BLOCK_SIZE,
+    )
+    assert check.predicted_invalidated_blocks == 3
+    assert check.measured_invalidated_blocks == 0
+    assert not check.theory_matches_measurement
+    assert_theory_matches(check)  # must not raise: extra reuse, not a shortfall
+
+
 def test_build_compaction_event_record_computes_reprefill_ratio():
     check = compute_divergence_check(
         step_idx=10,

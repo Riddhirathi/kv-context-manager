@@ -27,6 +27,15 @@ See `AGENTKV_SPEC.md` for the full project spec and phased plan.
 
   (KV capacity varies ~50-100 tokens run-to-run from free-VRAM fragmentation at
   boot; see `configs/model.yaml`'s `measured` section for the source numbers.)
+- `max_model_len` is configured per model in `configs/model.yaml` (`primary: 8192`,
+  `fallback: 16384`), not one shared value: Phase 2's append_only policy never
+  prunes `frozen` (unlike naive, which replaces it every event), so a full
+  trajectory can need more total context than naive ever does. The primary
+  model's headroom is too tight (1.15x) to raise its ceiling safely, so
+  Phase 2 experiments run with `--use-fallback` (`Qwen/Qwen3-0.6B`, 3.56x
+  headroom) instead — spec §8's documented mitigation for "8GB is too tight
+  for a useful context length," and its own claim is that the *relative*
+  naive-vs-append_only effect is model-size-independent.
 - Pinned versions: see `pyproject.toml`. Installed and verified: torch 2.6.0+cu124,
   vLLM 0.8.5, Python 3.12.3.
 

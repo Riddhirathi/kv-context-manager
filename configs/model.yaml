@@ -14,7 +14,16 @@ engine:
   enable_prefix_caching: true
   block_size: 16                # vLLM default; cache reuse is granular to this
   gpu_memory_utilization: 0.85  # starting point; back off on OOM, log final value
-  max_model_len: 8192           # ceiling for the KV cache; tune against §0.1 measurement
+  # Ceiling for the KV cache, per model — split because their measured headroom
+  # (see `measured` below) is wildly different on this 8GB card: the primary
+  # model's capacity is only 1.15x of 8192 ("tight"), so it keeps Phase 0's
+  # original value, while the fallback measured 3.56x headroom at the same
+  # length, enough to safely raise its ceiling. Needed once Phase 2's
+  # append_only policy (which never prunes `frozen`, unlike naive) pushed a
+  # real trajectory's prompt to 9,449 tokens — past the primary's ceiling.
+  max_model_len:
+    primary: 8192
+    fallback: 16384
   seed: 0                       # overridden per-run by rigor.py's seed sweep (>=5 seeds)
   swap_space_gb: 4              # CPU offload space for Phase 4 KV connector work
 

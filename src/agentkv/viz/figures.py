@@ -57,3 +57,44 @@ def plot_cliff(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
+
+
+def plot_policy_comparison(
+    runs: dict[str, pd.DataFrame],
+    out_path: Path,
+    *,
+    title: str = "The fix: cumulative prefill tokens vs. agent step, by policy",
+) -> None:
+    """AGENTKV_SPEC.md §2's Gate 2 figure — the same axes as `plot_cliff`, with
+    every policy overlaid on one trajectory, so the reduction in the naive
+    policy's staircase is visible directly rather than argued from a table.
+
+    `runs` maps policy name -> that policy's per-step frame (same shape as
+    `plot_cliff`'s `steps` argument) for one common trajectory.
+    """
+    import matplotlib.pyplot as plt
+
+    colors = ["#dc2626", "#16a34a", "#2563eb", "#9333ea", "#ea580c"]
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    for (policy, frame), color in zip(runs.items(), colors, strict=False):
+        ordered = frame.sort_values("step_idx")
+        ax.plot(
+            ordered["step_idx"],
+            ordered["prefill_tokens"].cumsum(),
+            color=color,
+            linewidth=1.8,
+            label=policy,
+        )
+
+    ax.set_xlabel("agent step")
+    ax.set_ylabel("cumulative prefill tokens")
+    ax.set_title(title)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(loc="upper left", frameon=False)
+    fig.tight_layout()
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
