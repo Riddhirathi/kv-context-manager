@@ -17,6 +17,7 @@ Long-horizon LLM agents append to their context on every step, which makes them 
 ## 2. Goals and non-goals
 
 ### Goals
+
 - G1. **Measure** the cache-invalidation cost of standard compaction, precisely, with reproducible numbers.
 - G2. **Reduce** it via a cache-aware context layout, without changing the model.
 - G3. **Compare** token-space compaction against KV-space eviction on one common axis.
@@ -24,12 +25,14 @@ Long-horizon LLM agents append to their context on every step, which makes them 
 - G5. Produce an **analytical cost model** that extrapolates single-GPU measurements to production model sizes.
 
 ### Non-goals
+
 - Not training or fine-tuning any model. Inference only.
 - Not building a new serving engine. Build *on top of* and *inside* vLLM.
 - Not claiming state-of-the-art agent accuracy. The agent's absolute task performance is irrelevant; only the *delta* between compaction policies matters.
 - Not multi-GPU, not distributed, not production-hardened.
 
 ### Explicit success criteria for the repo
+
 The project is "done" when a reader can run `make reproduce` on a single consumer GPU and regenerate every figure in the report from scratch in under 6 hours.
 
 ---
@@ -38,20 +41,20 @@ The project is "done" when a reader can run `make reproduce` on a single consume
 
 (Plain-language versions of all of these live in `CONCEPTS_PRIMER.md`. This section is the precise version.)
 
-| Term | Operational definition used in this repo |
-|---|---|
-| **Prefill** | The forward pass over all prompt tokens that populates the KV cache. Compute-bound. |
-| **Decode** | Autoregressive generation, one token per forward pass. Memory-bandwidth-bound. |
-| **KV cache** | Per-layer Key/Value tensors for every past token. Bytes per token = `2 × n_layers × n_kv_heads × head_dim × dtype_bytes`. |
-| **Block / page** | vLLM stores KV in fixed-size blocks (default `block_size = 16` tokens). Cache reuse is granular to blocks, not tokens. |
-| **Prefix cache (APC)** | vLLM hashes block contents; a new request reuses cached blocks for its longest matching *prefix*. Divergence at token *i* invalidates every block from `floor(i / block_size)` onward. |
-| **Cache hit rate** | `num_cached_tokens / num_prompt_tokens`, reported by vLLM per request. |
-| **Anchor** | The immutable head of the context: system prompt + tool schemas + original task. Never rewritten. |
-| **Frozen segment** | A summary chunk, written exactly once and never edited afterwards. Segments accumulate append-only. |
-| **Live window** | The most recent K turns, kept verbatim. |
-| **Compaction event** | Any operation that reduces context length. Two families: *token-space* (rewrite text) and *KV-space* (drop KV entries, text unchanged). |
-| **Divergence point** | The first token index where the new context differs from the previously cached one. Determines re-prefill cost. |
-| **Action agreement** | Whether the model, given a compacted context, emits the same next tool call as it would given the full context. Primary quality proxy. |
+| Term                         | Operational definition used in this repo                                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Prefill**            | The forward pass over all prompt tokens that populates the KV cache. Compute-bound.                                                                                                         |
+| **Decode**             | Autoregressive generation, one token per forward pass. Memory-bandwidth-bound.                                                                                                              |
+| **KV cache**           | Per-layer Key/Value tensors for every past token. Bytes per token =`2 × n_layers × n_kv_heads × head_dim × dtype_bytes`.                                                              |
+| **Block / page**       | vLLM stores KV in fixed-size blocks (default`block_size = 16` tokens). Cache reuse is granular to blocks, not tokens.                                                                     |
+| **Prefix cache (APC)** | vLLM hashes block contents; a new request reuses cached blocks for its longest matching*prefix*. Divergence at token *i* invalidates every block from `floor(i / block_size)` onward. |
+| **Cache hit rate**     | `num_cached_tokens / num_prompt_tokens`, reported by vLLM per request.                                                                                                                    |
+| **Anchor**             | The immutable head of the context: system prompt + tool schemas + original task. Never rewritten.                                                                                           |
+| **Frozen segment**     | A summary chunk, written exactly once and never edited afterwards. Segments accumulate append-only.                                                                                         |
+| **Live window**        | The most recent K turns, kept verbatim.                                                                                                                                                     |
+| **Compaction event**   | Any operation that reduces context length. Two families:*token-space* (rewrite text) and *KV-space* (drop KV entries, text unchanged).                                                  |
+| **Divergence point**   | The first token index where the new context differs from the previously cached one. Determines re-prefill cost.                                                                             |
+| **Action agreement**   | Whether the model, given a compacted context, emits the same next tool call as it would given the full context. Primary quality proxy.                                                      |
 
 ---
 
@@ -134,12 +137,14 @@ Each phase has a **deliverable**, an **acceptance test**, and an **exit gate**. 
 ### Phase 0 — Measurement harness (target: 5–7 days)
 
 **0.1 Environment**
+
 - vLLM (V1 engine) on the 4060. Model: `Qwen/Qwen3-1.7B` primary, `Qwen/Qwen3-0.6B` fallback if VRAM-tight. Both support tool calling.
 - Set `gpu_memory_utilization` empirically — start at 0.85, back off on OOM. Log the resulting KV cache capacity in tokens; this number goes in the README.
 - Confirm prefix caching is enabled and that `num_cached_tokens` is exposed per request.
 
 **0.2 Benchmark rigor module (`metrics/rigor.py`)**
 This is not optional polish. On a thermally-throttled laptop, sloppy measurement produces fake results.
+
 - Lock GPU clocks via `nvidia-smi -lgc` where permitted; if not permitted, detect and record clock drift per run and fail loudly if it exceeds 5%.
 - Warmup: discard the first N=3 trajectories.
 - **Interleaved A/B**: never run all of policy A then all of policy B. Alternate them, so thermal drift affects both equally. This is a hard requirement.
@@ -153,6 +158,7 @@ Per agent step, record: `step_idx, prompt_tokens, cached_tokens, prefill_tokens,
 Deterministic replay is the backbone of the whole project. Record real agent trajectories **once** using a strong model via a free API tier (Groq / Cerebras / Gemini free tier all work). Store as JSONL: list of `{role, content, tool_calls, tool_results}`. Then replay them locally against the small model. This decouples "is the agent good?" (irrelevant) from "what does compaction cost?" (the actual question).
 
 Record at minimum:
+
 - 30 trajectories of ≥80 steps each
 - Mixed tool-output sizes, including some very large ones (log dumps, file contents) — these are what compaction actually targets
 - Store raw, uncompacted, so every policy sees identical input
@@ -180,6 +186,7 @@ Record at minimum:
 The core L1 contribution. No vLLM internals touched.
 
 **2.1 `ContextState` model**
+
 ```
 ContextState:
   anchor:          Segment            # system + tools + task, immutable
@@ -189,6 +196,7 @@ ContextState:
 
 **2.2 Append-only compaction (`policies/append_only.py`)**
 On a compaction event at step *t*:
+
 1. Select the oldest turns in `live` for retirement.
 2. Summarize them into a new `Segment` S_t.
 3. **Append** S_t to `frozen`. Never modify S_1..S_{t-1}.
@@ -238,6 +246,7 @@ Build one long-horizon task a 1.7B model can actually complete, with programmati
 > Your PCIe 4.0 x8 link (~16 GB/s) is a *feature* for this experiment. On an NVLink server the transfer is nearly free and policy quality is invisible. On your laptop, a bad policy is measurably bad. Say this explicitly in the writeup.
 
 **4.4 `policies/hybrid.py`** — the contribution. Per segment, choose one of three actions:
+
 - keep verbatim (cheap, no quality loss, costs context length)
 - KV-evict (free prefill, lossy, unrecoverable)
 - textually summarize into a frozen segment (costs re-prefill from divergence, semantically smart)
@@ -316,14 +325,14 @@ Rehearse a 60-second and a 5-minute version. The 60-second version is: problem �
 
 ## 8. Risk register
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| The cache-invalidation cost is smaller than hypothesized | Medium | Gate 1 catches it early. Pivot to "here is why the intuition is wrong," which is still a publishable measurement. |
-| vLLM internals shift and break L3 work | High | Pin the vLLM version. Keep L1/L2 contributions independent of internals. |
-| 8 GB is too tight for a useful context length | Medium | Fall back to Qwen3-0.6B; the *relative* effect is model-size-independent, and the cost model handles extrapolation. |
-| Thermal throttling corrupts timings | High | `metrics/rigor.py` is a Phase 0 requirement precisely for this. |
-| Phase 5 doesn't work | High | It's explicitly a stretch. Ship Phases 0–4 as a complete project first. |
-| Small model can't complete any agent task | Medium | The synthetic ledger task in 3.3 is designed to be within a 1.7B model's reach. Action agreement is the backstop metric. |
+| Risk                                                     | Likelihood | Mitigation                                                                                                               |
+| -------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------ |
+| The cache-invalidation cost is smaller than hypothesized | Medium     | Gate 1 catches it early. Pivot to "here is why the intuition is wrong," which is still a publishable measurement.        |
+| vLLM internals shift and break L3 work                   | High       | Pin the vLLM version. Keep L1/L2 contributions independent of internals.                                                 |
+| 8 GB is too tight for a useful context length            | Medium     | Fall back to Qwen3-0.6B; the*relative* effect is model-size-independent, and the cost model handles extrapolation.     |
+| Thermal throttling corrupts timings                      | High       | `metrics/rigor.py` is a Phase 0 requirement precisely for this.                                                        |
+| Phase 5 doesn't work                                     | High       | It's explicitly a stretch. Ship Phases 0–4 as a complete project first.                                                 |
+| Small model can't complete any agent task                | Medium     | The synthetic ledger task in 3.3 is designed to be within a 1.7B model's reach. Action agreement is the backstop metric. |
 
 ---
 

@@ -272,24 +272,50 @@ class VLLMEngine:
         )
 
     def complete_text(
-        self, prompt_token_ids: list[int], *, max_tokens: int, temperature: float = 0.0
+        self,
+        prompt_token_ids: list[int],
+        *,
+        max_tokens: int,
+        temperature: float = 0.0,
+        guided_json: dict[str, object] | None = None,
+        min_tokens: int = 0,
     ) -> str:
         """Plain-text completion, not routed through the cache-hit-delta bookkeeping
         in `generate_step` — used for summarization calls (policies/naive.py) that
         are real generation work but not one of the trajectory steps being measured.
         `temperature=0.0` keeps summaries deterministic given the same input text,
         which compaction-event reproducibility depends on.
+
+        `guided_json`, when given, is forwarded as vLLM's grammar-constrained
+        decoding schema (no server restart or extra flags needed — vLLM's
+        OpenAI-compatible server accepts this per-request on the plain
+        `/v1/completions` endpoint). `bench/agreement.py` uses this: verified
+        empirically that this measurement model, asked in free text to
+        produce a `{"name": ..., "args": {...}}` action, would either emit an
+        immediate end-of-sequence token (nothing generated) or write prose
+        reasoning that never actually closes a valid JSON call — grammar
+        constraints force a well-formed object every time instead.
+
+        `min_tokens`, when given, blocks end-of-sequence for that many tokens.
+        Verified empirically (Phase 3.1 debugging): a primed prompt can lead
+        this model to emit an immediate EOS (`finish_reason="stop"`, 1
+        completion token, empty text) rather than answering at all —
+        `bench/tasks/probes.py`'s free-text QA elicitation isn't wrapped in
+        `guided_json` (an open-ended answer isn't a fixed schema), so it needs
+        this instead to guarantee a non-empty attempt.
         """
-        response = self._client.post(
-            f"{self._base_url}/v1/completions",
-            json={
-                "model": self._config.model_name,
-                "prompt": prompt_token_ids,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "seed": self._config.seed,
-            },
-        )
+        payload: dict[str, object] = {
+            "model": self._config.model_name,
+            "prompt": prompt_token_ids,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "seed": self._config.seed,
+        }
+        if guided_json is not None:
+            payload["guided_json"] = guided_json
+        if min_tokens:
+            payload["min_tokens"] = min_tokens
+        response = self._client.post(f"{self._base_url}/v1/completions", json=payload)
         response.raise_for_status()
         text: str = response.json()["choices"][0]["text"]
 
