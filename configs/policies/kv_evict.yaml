@@ -1,0 +1,9 @@
+# KV-space eviction, StreamingLLM-style (AGENTKV_SPEC.md §4.1).
+# Same threshold semantics as naive.yaml/append_only.yaml, so the comparison
+# isolates the eviction-vs-summarization difference itself.
+threshold_pct_of_window: 0.6
+# Number of most-recent turns kept verbatim in the sliding window (the
+# "sink" is this project's existing anchor, turns[0], always kept). Turns
+# older than the window are deleted outright — no summary is generated —
+# so there is no max_summary_tokens knob here, unlike naive.yaml/append_only.yaml.
+window_turns: 20

@@ -59,6 +59,74 @@ def plot_cliff(
     plt.close(fig)
 
 
+def plot_pareto(
+    points: dict[str, dict[str, float]],
+    out_path: Path,
+    *,
+    incomplete: set[str] = frozenset(),  # type: ignore[assignment]
+    title: str = "The Pareto frontier: prefill cost vs. task success",
+) -> None:
+    """AGENTKV_SPEC.md §4.5's Gate 4 figure — "X = cumulative prefill tokens
+    (or $/trajectory), Y = task success rate. One point per policy per
+    configuration. This is the money figure of the whole project."
+
+    `points` maps policy name -> {"x": median prefill tokens, "x_low":,
+    "x_high":, "y": success rate in [0, 1], "y_low":, "y_high":} (IQR for x,
+    Wilson CI for y — spec §7's "report ... with error bars" applied to both
+    axes). `incomplete` names policies whose `x` does not represent a
+    full-trajectory cost (e.g. `none`, whose runs hit `context_exceeded`
+    before finishing) — plotted with a hollow/dashed marker and a distinct
+    legend entry, never silently mixed in with the complete points spec's
+    "you can defend every point on it" bar depends on.
+    """
+    import matplotlib.pyplot as plt
+
+    colors = ["#dc2626", "#16a34a", "#2563eb", "#9333ea", "#ea580c", "#0891b2", "#65a30d"]
+
+    fig, ax = plt.subplots(figsize=(9, 6.5))
+    for (policy, p), color in zip(points.items(), colors, strict=False):
+        x_err = [[p["x"] - p["x_low"]], [p["x_high"] - p["x"]]]
+        y_err = [[p["y"] - p["y_low"]], [p["y_high"] - p["y"]]]
+        is_incomplete = policy in incomplete
+        ax.errorbar(
+            [p["x"]],
+            [p["y"]],
+            xerr=x_err,
+            yerr=y_err,
+            fmt="o",
+            markersize=11,
+            markerfacecolor="white" if is_incomplete else color,
+            markeredgecolor=color,
+            markeredgewidth=2,
+            linestyle="none",
+            ecolor=color,
+            elinewidth=1.3,
+            capsize=4,
+            label=f"{policy} (partial run)" if is_incomplete else policy,
+        )
+        ax.annotate(
+            policy,
+            (p["x"], p["y"]),
+            textcoords="offset points",
+            xytext=(8, 8),
+            fontsize=9,
+            color=color,
+        )
+
+    ax.set_xlabel("median cumulative prefill tokens per trajectory (IQR error bars)")
+    ax.set_ylabel("task success rate (95% Wilson CI error bars)")
+    ax.set_ylim(-0.05, 1.05)
+    ax.set_title(title)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.legend(loc="upper right", frameon=False, fontsize=8)
+    fig.tight_layout()
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_policy_comparison(
     runs: dict[str, pd.DataFrame],
     out_path: Path,

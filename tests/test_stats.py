@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from agentkv.bench.stats import wilcoxon_signed_rank
+import pytest
+
+from agentkv.bench.stats import wilcoxon_signed_rank, wilson_confidence_interval
 
 
 def test_identical_samples_are_not_significant():
@@ -46,3 +48,32 @@ def test_ties_get_average_rank():
     # tied ranks (magnitude 5) each get rank 1.5; the larger difference gets rank 3.
     # w_pos = ranks{1.5, 3} = 4.5, w_neg = rank{1.5} = 1.5, w = min(...) = 1.5
     assert result.w_statistic == 1.5
+
+
+def test_wilson_ci_zero_of_five_matches_known_value():
+    # Cross-checked against results/phase3/phase3_summary.md's reported
+    # "0/5 (95% Wilson CI: 0%-43%)" figure.
+    ci = wilson_confidence_interval(0, 5)
+    assert ci.proportion == 0.0
+    assert ci.low == pytest.approx(0.0, abs=1e-3)
+    assert ci.high == pytest.approx(0.434, abs=1e-3)
+
+
+def test_wilson_ci_all_successes_stays_within_bounds():
+    ci = wilson_confidence_interval(5, 5)
+    assert ci.proportion == 1.0
+    assert 0.0 <= ci.low <= 1.0
+    assert ci.high == pytest.approx(1.0, abs=1e-9)
+
+
+def test_wilson_ci_widens_with_smaller_n():
+    narrow = wilson_confidence_interval(3, 20)
+    wide = wilson_confidence_interval(3, 5)
+    assert (wide.high - wide.low) > (narrow.high - narrow.low)
+
+
+def test_wilson_ci_raises_on_invalid_inputs():
+    with pytest.raises(ValueError):
+        wilson_confidence_interval(1, 0)
+    with pytest.raises(ValueError):
+        wilson_confidence_interval(6, 5)

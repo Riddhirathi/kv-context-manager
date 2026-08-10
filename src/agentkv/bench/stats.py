@@ -74,3 +74,35 @@ def wilcoxon_signed_rank(a: list[float], b: list[float]) -> PairedTestResult:
 
 def _standard_normal_cdf(x: float) -> float:
     return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+
+
+@dataclass(frozen=True)
+class WilsonInterval:
+    proportion: float
+    low: float
+    high: float
+
+
+def wilson_confidence_interval(successes: int, n: int, *, z: float = 1.96) -> WilsonInterval:
+    """Wilson score interval for a binomial proportion (default z=1.96, 95%
+    CI) — used for task-success rate error bars (spec §7: "report median and
+    IQR" / "every claimed improvement needs a ... test", and Gate 4's "a
+    Pareto plot exists ... and you can defend every point on it").
+
+    Preferred over the naive `p +/- z*sqrt(p(1-p)/n)` normal-approximation
+    interval because it stays inside [0, 1] and is well-behaved at the
+    extremes (p=0 or p=1) that small-n task-success sweeps in this project
+    routinely hit — e.g. Phase 3.3's 0/5 naive/append_only result.
+    """
+    if n <= 0:
+        raise ValueError(f"n must be > 0, got {n}")
+    if not 0 <= successes <= n:
+        raise ValueError(f"successes must be in [0, {n}], got {successes}")
+    p = successes / n
+    z2 = z * z
+    denom = 1 + z2 / n
+    center = (p + z2 / (2 * n)) / denom
+    half_width = (z / denom) * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))
+    return WilsonInterval(
+        proportion=p, low=max(0.0, center - half_width), high=min(1.0, center + half_width)
+    )

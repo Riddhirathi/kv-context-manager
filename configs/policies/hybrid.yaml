@@ -1,0 +1,15 @@
+# Hybrid per-segment routing (AGENTKV_SPEC.md §4.4).
+# Same threshold semantics as naive.yaml/append_only.yaml, so the comparison
+# isolates the routing decision itself.
+threshold_pct_of_window: 0.6
+max_summary_tokens: 300
+# The most recent N live turns are never routed (always kept verbatim) —
+# mirrors this project's general convention that very recent context is
+# cheap to keep and premature to touch.
+protect_recent_turns: 10
+# A tool turn at least this long routes to KV-evict (dropped, no summary) —
+# same threshold convention as kv/offload.py's large_tool_output_tokens.
+large_tool_output_tokens: 500
+# A turn under this length routes to keep-verbatim regardless of role — too
+# cheap to be worth summarizing or evicting.
+small_turn_tokens: 50

@@ -94,7 +94,12 @@ class VLLMEngine:
     """
 
     def __init__(
-        self, config: ModelConfig, *, port: int = 8901, startup_timeout_s: float = 300.0
+        self,
+        config: ModelConfig,
+        *,
+        port: int = 8901,
+        startup_timeout_s: float = 300.0,
+        kv_transfer_config: dict[str, object] | None = None,
     ) -> None:
         self._config = config
         self._base_url = f"http://127.0.0.1:{port}"
@@ -102,10 +107,23 @@ class VLLMEngine:
         self._kv_cache_capacity_tokens: int | None = None
         self._log_lines: list[str] = []
 
+        if kv_transfer_config is not None:
+            # kv/offload_connector.py's TrajectoryAwareOffloadConnector isn't
+            # in vLLM's own hardcoded connector registry — this launcher
+            # registers it inside the vLLM subprocess before delegating to
+            # vLLM's normal startup (see that script's module docstring for
+            # why a plain in-process import here wouldn't reach the right
+            # process).
+            launcher_path = (
+                Path(__file__).resolve().parents[3] / "experiments" / "_vllm_server_with_offload.py"
+            )
+            entrypoint: list[str] = [str(launcher_path)]
+        else:
+            entrypoint = ["-m", "vllm.entrypoints.openai.api_server"]
+
         cmd = [
             sys.executable,
-            "-m",
-            "vllm.entrypoints.openai.api_server",
+            *entrypoint,
             "--model",
             config.model_name,
             "--dtype",
@@ -123,6 +141,8 @@ class VLLMEngine:
         ]
         if config.enable_prefix_caching:
             cmd.append("--enable-prefix-caching")
+        if kv_transfer_config is not None:
+            cmd += ["--kv-transfer-config", json.dumps(kv_transfer_config)]
 
         self._process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
