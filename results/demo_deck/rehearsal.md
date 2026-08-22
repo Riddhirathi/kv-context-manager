@@ -31,7 +31,6 @@ Problem -> cliff figure -> one-line mechanism -> Pareto plot -> reproducibility 
 Same shape, more room to show the work and the honesty.
 
 1. **Problem (30s).** Same opener as the 60-second version.
-
 2. **The cliff — `deck_1_cliff.png` (60s).** "This is naive compaction on one
    trajectory: summarize-and-replace whenever the window fills up. Notice the
    staircase isn't smooth — it's flat, flat, flat, then a vertical jump. Every
@@ -39,7 +38,6 @@ Same shape, more room to show the work and the honesty.
    model has to reprefill from the divergence point forward. Across the
    project's full 14-trajectory sweep, naive spends a median of ~63% of all
    its prefill compute on these events alone, not on making progress."
-
 3. **The mechanism (60s).** "Four real compaction strategies live in this
    repo: naive (LLM-summarize the middle when full), append-only (same, but
    never re-summarize what's already been summarized), KV-evict (drop a
@@ -49,7 +47,6 @@ Same shape, more room to show the work and the honesty.
    gets summarized, and the most recent turns are always protected verbatim
    so the part of the cache the model actually leans on next never gets
    touched."
-
 4. **The fix — `deck_2_fix.png` (45s).** "Same trajectory, all four policies
    overlaid. On this one trajectory: naive ends at 93,276 cumulative prefill
    tokens, append-only close behind at 92,872, KV-evict is *worse* at
@@ -58,7 +55,6 @@ Same shape, more room to show the work and the honesty.
    one trajectory: across the full 14-trajectory, 5-seed sweep the median
    figures are naive 78,436, KV-evict 106,030, hybrid 70,026 — a paired
    Wilcoxon test confirms hybrid's reduction is significant."
-
 5. **The Pareto frontier — `deck_3_pareto.png` (60s).** "Cost on the x-axis,
    task success on the y-axis, one point per policy. Hybrid sits furthest
    left among the four complete policies — cheapest. The fifth point,
@@ -66,7 +62,6 @@ Same shape, more room to show the work and the honesty.
    it blows through the model's context window before any trajectory
    finishes, on every single one. That's not swept under the rug; it's the
    point. No compaction can't even survive most of a long trajectory here."
-
 6. **The honest part (45s).** "Task success is 0 out of 5 for *every*
    policy on this task/model — that's not a policy failure, it's a floor
    effect: the underlying model can't reliably finish this 50-transaction
@@ -79,7 +74,6 @@ Same shape, more room to show the work and the honesty.
    versus ~93 calls and ~9 left unprocessed for the other policies — real
    signal that better routing lets the model progress further, even though
    nothing here clears the success bar yet."
-
 7. **Close (30s).** "Every number on these three figures comes from a
    committed parquet file, never hand-edited. This deck itself is one
    command — `python experiments/demo_deck.py`, no GPU needed, it just

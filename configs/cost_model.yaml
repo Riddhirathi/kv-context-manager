@@ -1,0 +1,71 @@
+# Analytical prefill cost model config (AGENTKV_SPEC.md Phase 6, §6.1).
+# spec §10: "No magic numbers in code — everything in configs/."
+#
+# Architecture numbers for the two measured models (Qwen3-0.6B/1.7B) come
+# from each model's own HF config + actual instantiated parameter count
+# (transformers.AutoConfig / AutoModelForCausalLM.from_pretrained(...).
+# parameters(), both already downloaded locally from this project's earlier
+# phases) — not hand-derived from hidden_size/num_attention_heads, because
+# Qwen3 sets `head_dim` independently of hidden_size/num_heads (confirmed:
+# head_dim=128 while hidden_size/num_heads=64 for both sizes), which would
+# silently break a formula assuming head_dim = hidden_size / num_heads.
+# Recorded 2026-08-11.
+#
+# Llama-3-70B was never downloaded or run (70B doesn't fit this project's
+# 8GB GPU — it's the extrapolation target, not a measured model). Its
+# n_params is computed from Meta's published architecture config
+# (hidden_size=8192, num_hidden_layers=80, num_key_value_heads=8,
+# intermediate_size=28672, untied embeddings) via the standard dense-
+# transformer parameter-counting formula, and cross-checked against the
+# commonly-cited public figure (~70.6B) — matches within 0.2%.
+#
+# Hardware peak FLOPS are NVIDIA's own published datasheet dense (non-
+# sparse) BF16/FP16 Tensor Core figures. Datasheets lead with a "with
+# sparsity" headline number (structured 2:4 sparsity, which most production
+# models don't hit) — dense is exactly half that figure per NVIDIA's own
+# footnote convention, and is the defensible number for a real serving
+# workload.
+#
+# $/GPU-hour for H100 is illustrative, not a specific measurement (same
+# spirit as the dashboard's illustrative $/token rate, viz/dashboard.py) —
+# 2026 on-demand market rates span roughly $2-12/hr depending on provider
+# (specialized/neocloud providers cluster $2-4/hr, hyperscalers $6-12/hr).
+# The point estimate here sits at the cheap end deliberately, since that's
+# the rate a cost-conscious deployment would actually target — not a
+# hyperscaler retail rate.
+
+models:
+  qwen3_0_6b:
+    name: "Qwen/Qwen3-0.6B"
+    n_params: 596049920
+    n_layers: 28
+    hidden_size: 1024
+  qwen3_1_7b:
+    name: "Qwen/Qwen3-1.7B"
+    n_params: 1720574976
+    n_layers: 28
+    hidden_size: 2048
+  llama3_70b:
+    name: "Llama-3-70B (extrapolation target — never downloaded or run)"
+    n_params: 70552387584
+    n_layers: 80
+    hidden_size: 8192
+
+hardware:
+  rtx_4060_laptop:
+    name: "RTX 4060 Laptop 8GB (this project's own GPU)"
+    peak_flops_per_sec: 23.22e+12
+    usd_per_gpu_hour: null  # not cloud-rentable — this is the project's own hardware
+  h100_sxm:
+    name: "H100 SXM 80GB (extrapolation target)"
+    peak_flops_per_sec: 989.5e+12
+    usd_per_gpu_hour: 2.50
+
+sensitivity:
+  # Cross-check scenario independent of this project's own fitted
+  # efficiency: a commonly-cited production-serving MFU (model FLOPs
+  # utilization) figure for well-optimized large-model inference. Used
+  # alongside, not instead of, the empirically-fitted efficiency — batch-
+  # size-1 prefill on an underutilized laptop GPU and a production H100
+  # serving stack are not necessarily the same efficiency regime.
+  industry_typical_h100_mfu: 0.40

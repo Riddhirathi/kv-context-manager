@@ -149,7 +149,20 @@ class VLLMEngine:
         )
         self._log_thread = threading.Thread(target=self._drain_log, daemon=True)
         self._log_thread.start()
-        self._wait_until_ready(startup_timeout_s)
+        try:
+            self._wait_until_ready(startup_timeout_s)
+        except BaseException:
+            # `_wait_until_ready` raising means `__init__` never returns, so
+            # `with VLLMEngine(...) as engine:` never reaches `__enter__` —
+            # `__exit__`/`shutdown()` is never called, and `self._process`
+            # (plus its GPU memory) leaks as an orphan. Confirmed concretely
+            # (not theoretically): a timed-out startup during Phase 6
+            # reproducibility testing left a live vLLM worker process
+            # holding ~6.5GB of GPU memory that a subsequent boot attempt
+            # then had to contend with. Clean up here so a failed boot never
+            # outlives the exception that reports it.
+            self.shutdown()
+            raise
 
     def _drain_log(self) -> None:
         assert self._process.stdout is not None
