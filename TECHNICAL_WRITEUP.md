@@ -287,18 +287,3 @@ the 70B/H100 cost projection carries real efficiency-transfer assumptions,
 stated with sensitivity bounds rather than hidden; all measurements come
 from one synthetic task on 14-15 trajectories, not real production traffic;
 and the reproducibility pipeline's live verification is incomplete.
-
-## What's next
-
-The single highest-leverage follow-up Phase 3 already points at directly:
-investigate summarization *fidelity* (does `max_summary_tokens` or
-`retire_fraction` move retention or task success more than layout or
-routing policy does?) rather than continuing to vary how compacted content
-is arranged. Behind that: implement offload's suggested classification-
-caching fix and re-measure; sweep each policy's threshold/window
-configuration instead of reporting one point each; find a task/model
-combination that clears the 0% success floor so the Pareto plot's quality
-axis can say something beyond "flat"; and, if revisited, a genuine
-live-session KV-management path for eviction, which Phase 4.1 identified
-as the real prerequisite "zero re-prefill" eviction needs and this
-project's request-based harness cannot itself provide.

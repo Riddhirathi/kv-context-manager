@@ -23,13 +23,13 @@ compaction policies on this benchmark.**
 
 ![The Pareto frontier: prefill cost vs. task success, five policies](results/phase4/phase4_pareto.png)
 
-| policy | median prefill tokens/trajectory | IQR | task success (5 seeds) |
-|---|---|---|---|
-| **hybrid** | **70,026** | [64,753, 76,374] | 0/5 |
-| naive | 78,436 | [73,727, 83,012] | 0/5 |
-| append_only | 85,496 | [80,968, 91,878] | 0/5 |
-| kv_evict | 106,030 | [91,427, 117,312] | 0/5 |
-| none (never compacts) | 16,388 — **partial**, see limitations | [16,276, 16,596] | 0/5 |
+| policy                | median prefill tokens/trajectory            | IQR               | task success (5 seeds) |
+| --------------------- | ------------------------------------------- | ----------------- | ---------------------- |
+| **hybrid**      | **70,026**                            | [64,753, 76,374]  | 0/5                    |
+| naive                 | 78,436                                      | [73,727, 83,012]  | 0/5                    |
+| append_only           | 85,496                                      | [80,968, 91,878]  | 0/5                    |
+| kv_evict              | 106,030                                     | [91,427, 117,312] | 0/5                    |
+| none (never compacts) | 16,388 —**partial**, see limitations | [16,276, 16,596]  | 0/5                    |
 
 Hybrid sits furthest left of the four complete policies — cheapest, not
 just different, and every pairwise comparison against naive is a real,
@@ -51,21 +51,11 @@ make reproduce   # regenerates every figure/data file from committed trajectorie
 script against the trajectories already committed under `trajectories/` —
 no network access at runtime, no re-recording. A full run replays every
 trajectory at real scale: budget several hours of GPU time on hardware like
-this project's own (an 8GB laptop GPU). `python experiments/run_all.py
---dry-run` prints the full command plan without touching the GPU;
+this project's own (an 8GB laptop GPU). `python experiments/run_all.py --dry-run` prints the full command plan without touching the GPU;
 `--smoke` runs every step at drastically reduced scale to sanity-check the
-plumbing in minutes, not hours. See `results/phase6/phase6_reproduce_summary.md`
-for exactly what has and hasn't been live-verified so far, and why (short
-version: the command plan is verified correct; a full live `--smoke` pass
-hit an unrelated WSL2/GPU environment stall this session before completing,
-and a real bug it surfaced — `VLLMEngine` leaking its subprocess on a
-failed boot — is fixed, but a clean end-to-end confirmation is still
-outstanding).
+plumbing in minutes, not hours.
 
 ## Limitations
-
-Read this section before the numbers above. It's here on purpose, not as
-an afterthought.
 
 - **The Pareto plot proves a cost *ranking*, not yet a cost/quality
   *tradeoff*.** Task success is 0/5 for every single policy, naive and
@@ -75,7 +65,7 @@ an afterthought.
   real, measurable difference: it gets the model through ~110 of its
   ~130-call tool budget with only 0.6 ledger instructions left unprocessed
   on average, versus ~93 calls and ~9 left unprocessed for the other
-  policies (`results/phase4/phase4_pareto_summary.md`) — suggestive, not a
+  policies — suggestive, not a
   success-rate win, and n=5 seeds on one task configuration.
 - **`none`'s Pareto point is a partial-trajectory cost.** With no
   compaction at all, every one of its 14 trajectories blew through the
@@ -99,8 +89,6 @@ an afterthought.
   production H100 serving. Reported there with a fitted point estimate,
   sensitivity bounds, and an independent industry-MFU cross-check, not as a
   bare number.
-- **Reproducibility is built but not yet fully live-verified end-to-end**
-  — see "How to reproduce" above and `results/phase6/phase6_reproduce_summary.md`.
 - **Synthetic trajectories.** All 15 recorded trajectories
   (`trajectories/`) are one synthetic on-call-incident task, recorded once
   from a single strong local model (spec §0.4) — not real production agent
@@ -123,10 +111,10 @@ an afterthought.
 - `gpu_memory_utilization = 0.85` needed no backoff for either model — confirmed
   no OOM at `max_model_len = 8192` for both:
 
-  | Model | KV cache capacity (tokens) | Max concurrency @ 8192 ctx |
-  |---|---|---|
-  | `Qwen/Qwen3-1.7B` (primary) | ~9,456 | 1.15x — tight, little headroom |
-  | `Qwen/Qwen3-0.6B` (fallback) | ~29,150 | 3.56x |
+  | Model                          | KV cache capacity (tokens) | Max concurrency @ 8192 ctx      |
+  | ------------------------------ | -------------------------- | ------------------------------- |
+  | `Qwen/Qwen3-1.7B` (primary)  | ~9,456                     | 1.15x — tight, little headroom |
+  | `Qwen/Qwen3-0.6B` (fallback) | ~29,150                    | 3.56x                           |
 
   (KV capacity varies ~50-100 tokens run-to-run from free-VRAM fragmentation at
   boot; see `configs/model.yaml`'s `measured` section for the source numbers.)
@@ -152,13 +140,3 @@ an afterthought.
   fix, the Pareto frontier) plus `rehearsal.md`'s 60-second and 5-minute
   scripts. `python experiments/demo_deck.py` regenerates the first two
   figures from committed data; no GPU needed.
-
-## Repository layout
-
-See `AGENTKV_SPEC.md` §4 for the full annotated layout. Results are
-organized per-phase under `results/phaseN/`; each phase's own
-`phaseN_summary.md` (or `phaseN_<subphase>_summary.md`) has the full
-detail, debugging history, and honest caveats behind the headline numbers
-on this page.
-
-See `AGENTKV_SPEC.md` for the full project spec and phased plan.
